@@ -7,15 +7,18 @@ setopt err_return
 
 
 
-cat - <<-'EOD'
-master/braid//home/scott/ncode/learnvimscriptthehardway-wrapper/external/sjl/bookmarkdown
-EOD
+# cat - <<-'EOD'
+# master/braid//home/scott/ncode/learnvimscriptthehardway-wrapper/external/sjl/bookmarkdown
+# EOD
 
 # no version tags upstream
 UPSTREAM_BRANCH='master'
 
 () {
-    local ext_d=${LVS_THWW__EXT_D}
+    local abs_ext_d=${LVS_THWW__EXT_D}
+    local ext_d="" ;
+    ext_d=$(realpath -m --relative-to ${LVS_THWW__ROOT_D} $abs_ext_d)
+
     local gh_user='sjl'
     local user_url="https://github.com/${gh_user}"
     typeset -a repo_names ;
