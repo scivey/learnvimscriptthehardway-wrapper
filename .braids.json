@@ -3,5 +3,10 @@
     "url": "https://github.com/sjl/bookmarkdown.git",
     "branch": "master",
     "revision": "6ea8dac813a9dbfbb25fc8a3018c8c2560315ddc"
+  },
+  "external/sjl/learnvimscriptthehardway": {
+    "url": "https://github.com/sjl/learnvimscriptthehardway.git",
+    "branch": "master",
+    "revision": "6de41b3164d69a231b2eccadb54a1d94ae8181ad"
   }
 }
