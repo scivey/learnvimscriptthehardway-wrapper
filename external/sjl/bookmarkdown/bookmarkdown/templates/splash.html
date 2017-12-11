@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block class %}splash{% endblock %}
+
+{% block content_full %}
+    <section class="content fourteen columns offset-by-one">
+        {{ content }}
+
+        <section class="toc">
+            <h2>Table of Contents</h2>
+
+            <ol class="pre-toc">
+                <li><a href="/preface.html">Preface</a></li>
+                <li><a href="/acknowledgements.html">Acknowledgements</a></li>
+            </ol>
+            <ol class="toc" start="0">
+                {% for chapter in chapters %}
+                    <li><a href="/{{ chapter['filename'] }}.html">{{ chapter['name'] }}</a></li>
+                {% endfor %}
+            </ol>
+        </section>
+    </section>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content_full %}
+    <section class="nav three columns">
+        {{ toc }}
+
+        <div class="prevnext">
+            {% if prev %}
+                <a class="prev" href="{{ prev }}">&laquo; Prev</a>
+            {% endif %}
+            {% if next %}
+                <a class="next" href="{{ next }}">Next &raquo;</a>
+            {% endif %}
+        </div>
+    </section>
+
+    <section class="content twelve columns offset-by-one">
+        {{ content }}
+
+        <div class="prevnext">
+            {% if prev %}
+                <a class="prev" href="{{ prev }}">&laquo; Previous</a>
+            {% endif %}
+            {% if next %}
+                <a class="next" href="{{ next }}">Next &raquo;</a>
+            {% endif %}
+        </div>
+    </section>
+{% endblock %}

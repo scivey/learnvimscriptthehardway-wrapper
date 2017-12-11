@@ -1,0 +1,7 @@
+{
+  "external/sjl/bookmarkdown": {
+    "url": "https://github.com/sjl/bookmarkdown.git",
+    "branch": "master",
+    "revision": "6ea8dac813a9dbfbb25fc8a3018c8c2560315ddc"
+  }
+}

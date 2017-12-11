@@ -1,0 +1,246 @@
+#!/usr/bin/env python
+
+# {{{
+import os, re, shutil, sys
+import baker
+import markdown
+try:
+    import config
+except ImportError:
+    config = {}
+from pyquery import PyQuery as pq
+from jinja2 import Environment, PackageLoader
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+env = Environment(loader=PackageLoader('bookmarkdown', 'templates'))
+join = os.path.join
+
+base_context = {
+    'book_title': getattr(config, 'title', ''),
+    'author': getattr(config, 'author', ''),
+    'author_url': getattr(config, 'author_url', ''),
+    'ga_id': getattr(config, 'ga_id', ''),
+    'gauges_id': getattr(config, 'gauges_id', ''),
+}
+md = markdown.Markdown(extensions=['toc', 'codehilite'], safe_mode=False)
+# }}}
+
+# Utilities -------------------------------------------------------------------
+def mkdirs(path):
+    def _md(acc, next):
+        target = join(acc, next)
+        os.path.exists(target) or os.mkdir(target)
+        return target
+    reduce(_md, path.split(os.path.sep), '')
+
+def render(template, **context):
+    full_context = {}
+    full_context.update(base_context)
+    full_context.update(context)
+
+    return env.get_template('%s.html' % template).render(**full_context)
+
+
+# Guts ------------------------------------------------------------------------
+def _get_next_prev(path, paths):
+    try:
+        i = paths.index(path)
+        next = ('/%s.html' % paths[i + 1]) if i < len(paths) - 1 else None
+        prev = ('/%s.html' % paths[i - 1]) if i > 0 else None
+    except ValueError:
+        next, prev = None, None
+
+    return next, prev
+
+def _build_html_file(path, template, paths=[], context={}):
+    source = '%s.markdown' % path
+
+    if not os.path.exists(source):
+        return
+
+    with open(source, 'r') as f:
+        raw_markdown = f.read()
+
+        if template == 'chapter':
+            raw_markdown = '[TOC]\n\n' + raw_markdown
+
+        content = md.convert(raw_markdown)
+
+    cq = pq(content)
+
+    try:
+        name = cq('h1').text()
+    except ValueError:
+        name = "Untitled Chapter"
+
+    if template != 'splash':
+        title = cq('h1').text()
+    else:
+        title = None
+
+    try:
+        toc = cq('.toc').html()
+        cq('.toc').remove()
+        content = unicode(cq)
+    except ValueError:
+        toc = None
+
+    next, prev = _get_next_prev(path, paths)
+
+    out = render(template, title=title, content=content, name=name, next=next,
+                 prev=prev, toc=toc, **context)
+    target = join('build', 'html', '%s.html' % path)
+
+    with open(target, 'w') as f:
+        f.write(out)
+
+    content = pq(out)
+
+    return {'content': content, 'name': content('.content h1').text(),
+            'filename': path}
+
+def _build_leanpub_file(path):
+    source = '%s.markdown' % path
+
+    if not os.path.exists(source):
+        return
+
+    with open(source, 'r') as f:
+        content = f.read()
+
+    content = re.sub(r'    :::(\w+)',
+                     r'{:lang="\1"}',
+                     content)
+
+    target = join('build', 'leanpub', '%s.markdown' % path.split('/')[-1])
+
+    with open(target, 'w') as f:
+        f.write(content)
+
+def _build_leanpub_book_file(front, chapters):
+    with open(join('build', 'leanpub', 'Book.txt'), 'w') as f:
+        f.write('Front:\n')
+        for path in front:
+            f.write(path + '.markdown\n')
+
+        f.write('Main:\n')
+        for path in chapters:
+            f.write(path.split('/')[-1] + '.markdown\n')
+
+def _build_index_file(chapters):
+    source = 'introduction.markdown'
+
+    if not os.path.exists(source):
+        return
+
+    with open(source, 'r') as f:
+        content = markdown.markdown(f.read())
+
+    out = render('splash', content=content, chapters=chapters)
+    target = join('build', 'html', 'index.html')
+
+    with open(target, 'w') as f:
+        f.write(out)
+
+
+def _chapters():
+    return sorted(os.listdir('chapters'))
+
+
+def _copy_static():
+    import bookmarkdown as ugly_hack
+
+    static_src = join(os.path.dirname(ugly_hack.__file__), 'static')
+    static_dest = join('build', 'html', 'static')
+
+    if os.path.exists(static_dest):
+        shutil.rmtree(static_dest)
+
+    shutil.copytree(static_src, static_dest)
+
+def _build_html():
+    mkdirs(join('build', 'html', 'chapters'))
+
+    _copy_static()
+
+    paths = ['preface', 'acknowledgements']
+    for filename in _chapters():
+        if filename.endswith('.markdown'):
+            name = filename.rsplit('.')[0]
+            paths.append(join('chapters', name))
+
+    _build_html_file('license', 'single', paths)
+    _build_html_file('preface', 'single', paths)
+    _build_html_file('acknowledgements', 'single', paths)
+
+    chapters = []
+    for path in paths[2:]:
+        chapter = _build_html_file(path, 'chapter', paths)
+        chapters.append(chapter)
+
+    _build_index_file(chapters)
+
+def _build_leanpub():
+    mkdirs(join('build', 'leanpub'))
+
+    paths = ['preface', 'acknowledgements']
+    for filename in _chapters():
+        if filename.endswith('.markdown'):
+            name = filename.rsplit('.')[0]
+            paths.append(join('chapters', name))
+
+    for path in paths:
+        _build_leanpub_file(path)
+
+    front = ['preface', 'acknowledgements']
+    if 'chapters/00' in paths:
+        front.append('00')
+    chapters = paths[len(front):]
+
+    _build_leanpub_book_file(front, chapters)
+
+
+# Commands -------------------------------------------------------------------------
+@baker.command
+def leanpub():
+    '''Build the LeanPub-Markdown version of the book.'''
+    _build_leanpub()
+
+@baker.command
+def html():
+    '''Build the HTML version of the book.'''
+    _build_html()
+
+@baker.command
+def build():
+    '''Build all versions of the book.'''
+    _build_html()
+
+@baker.command
+def serve(address='127.0.0.1', port=8000):
+    '''Serve the rendered book with a local webserver.
+
+    :param address: The address to bind the server to (default: 127.0.0.1)
+    :param port: The port to bind the server to (default: 8000)
+
+    '''
+    import SimpleHTTPServer, SocketServer
+
+    os.chdir(join('build', 'html'))
+    server = SocketServer.TCPServer((address, port),
+                                    SimpleHTTPServer.SimpleHTTPRequestHandler)
+
+    print "Serving book at http://%s:%d" % (address, port)
+    server.serve_forever()
+
+@baker.command
+def watch():
+    '''Watch the source files and rebuild the book when changed.'''
+    pass
+
+
+# Entry ----------------------------------------------------------------------------
+if __name__ == '__main__':
+    baker.run()

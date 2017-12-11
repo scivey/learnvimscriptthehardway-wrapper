@@ -1,0 +1,4 @@
+baker
+jinja2
+Markdown
+pyquery
