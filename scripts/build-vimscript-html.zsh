@@ -8,9 +8,9 @@ setopt err_return
 () {
     local venv_d=${LVS_THWW__VENVS_D}/bmdown ;
     local py_bin='python2.7'
-    local ext_sjl=${LVS_THWW__EXT_D}/sjl
-    local bmdown_d=${sjl}/bookmarkdown
-    local lvthw_d=${sjl}/learnvimscriptthehardway
+    local ext_sjl_d=${LVS_THWW__EXT_D}/sjl
+    local bmdown_d=${ext_sjl_d}/bookmarkdown
+    local lvthw_d=${ext_sjl_d}/learnvimscriptthehardway
     local reqs=${bmdown_d}/requirements.txt
     local zinv_b=${LVS_THWW__SCRIPTS_D}/zinve
 
