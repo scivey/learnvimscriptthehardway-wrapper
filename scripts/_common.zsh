@@ -8,7 +8,8 @@ LVS_THWW__ROOT_D=${LVS_THWW__SCRIPTS_D:h}
 LVS_THWW__EXT_D=${LVS_THWW__ROOT_D}/external
 LVS_THWW__TMP_D=${LVS_THWW__ROOT_D}/tmp
 LVS_THWW__VENVS_D=${LVS_THWW__TMP_D}/venvs
-
+LVS_THWW__BUILD_D=${LVS_THWW__ROOT_D}/build
+LVS_THWW__LEARNVIML_BUILD_DEST=${LVS_THWW__BUILD_D}/learnvimscriptthehardway
 function pushd() { builtin pushd $@ >/dev/null ; }
 function popd() { builtin popd >/dev/null ; }
 

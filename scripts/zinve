@@ -1,0 +1,758 @@
+#!/usr/bin/env zsh
+
+setopt errexit
+setopt localtraps
+set -uo pipefail
+
+typeset -gxr ZINVE__CONFIG__IS_PROD_BUNDLE="1"
+
+typeset -gxr ZINVE__CONST__VERSION_STR="0.9.0"
+typeset -gxr ZINVE__CONST__GIT_REVISION="58d8d32290c263b92bfe907dcb4cfc7d52f6a95f"
+
+
+
+zinve::noop() { true ; }
+
+zinve::die-impl() {
+    [[ $- == *'i'* ]] || exit 1 ;
+    return 1 ;
+}
+
+if [[ -z ${ZINVE__PERFLOG+x} ]]; then
+    zinve::perfstamp() { true ; }
+else
+    zmodload zsh/datetime
+    integer zinve_perf_fd=0
+    mkdir -p ${ZINVE__PERFLOG:h}
+    rm -f ${ZINVE__PERFLOG}
+    exec {zinve_perf_fd}>$ZINVE__PERFLOG
+    zinve::perfstamp() { echo "${1}=${EPOCHREALTIME}" >&$zinve_perf_fd ; }
+fi
+
+zinve::perfstamp "START"
+
+_ZINVE__LOADER_SCRIPT_FPATH=${0:A}
+
+zinve::config::build-type::is-prod() {
+    [[ ${ZINVE__CONFIG__IS_PROD_BUNDLE:-""} == "1" ]] || return 1 ;
+}
+
+zinve::config::build-type::is-dev() {
+    if zinve::config::build-type::is-prod; then return 1; fi
+}
+
+_zinve::loader::fatal-fallback() {
+    local err_origin='loader.zsh'
+    local err_msg="$*" ; shift $# ;
+    cat >&2 <<-EOD
+
+!!!! ERROR !!!!
+    FATAL FAILURE OCCURRED PRIOR TO LOGGING SETUP!
+
+     ERR_ORIGIN: ${err_origin}
+    ERR_MESSAGE: ${err_msg}
+
+    ABORTING!
+
+!!!! ERROR !!!!
+EOD
+    zinve::die-impl ;
+}
+
+_zinve::loader::fatal() {
+    if type 'zinve::fatal' &>/dev/null; then
+        zinve::fatal $@ ;
+    else
+        _zinve::loader::fatal-fallback $@ ;
+    fi
+}
+
+function zinve::loader::source() {
+    local fname=$1 ;
+    if [[ -e "$fname" ]]; then
+        # shellcheck source=/dev/null
+        if ! . "$fname" ; then
+            _zinve::loader::fatal "error sourcing '$fname'"
+        fi
+    else
+        _zinve::loader::fatal "source target '$fname' does not exist"
+    fi
+}
+
+
+function zinve::loader::source-dir() {
+    local dname
+    if [[ $# -lt 1 ]]; then
+        _zinve::loader::fatal "$0 requires a directory"
+        return 1
+    fi
+    dname="$1"; shift
+    if [[ ! -d "$dname" ]]; then
+        local emsg="target directory '$dname' does not exist"
+        emsg+=" or is not a directory."
+        _zinve::loader::fatal $emsg
+        return 1
+    fi
+    local fname
+    while read -r fname; do
+        case ${fname:t} in
+            *'.disabled' | '_'* ) continue ;;
+            *) { zinve::loader::source $fname ; } ;;
+        esac
+    done < <( find -L "$dname" -maxdepth 1 -mindepth 1 -type f | sort )
+}
+
+function zinve::loader::load-all-libs() {
+    if zinve::config::build-type::is-dev; then
+        zinve::loader::source-dir ${_ZINVE__LOADER_SCRIPT_FPATH:h}/lib
+    fi
+}
+
+
+set -euo pipefail
+setopt local_traps
+
+
+zinve::noop ${ZINVE__CONFIG__WANT_COLOR:="1"}
+
+zinve::noop ${ZINVE__CONFIG__HAVE_COLOR:=""}
+
+if [[ ${ZINVE__CONFIG__HAVE_COLOR} == "" ]]; then
+    if [[ ${ZINVE__CONFIG__WANT_COLOR} == "1" ]]; then
+        if autoload -Uz colors && colors; then
+            ZINVE__CONFIG__HAVE_COLOR="1"
+        else
+            ZINVE__CONFIG__HAVE_COLOR="0"
+        fi
+    else
+        ZINVE__CONFIG__HAVE_COLOR="0"
+    fi
+fi
+
+_zinve::fmt::use-colors() {
+    [[ ${ZINVE__CONFIG__WANT_COLOR:-""} == "1" ]] || return 1 ;
+    [[ ${ZINVE__CONFIG__HAVE_COLOR:-""} == "1" ]] || return 1 ;
+}
+
+# adapted from https://github.com/Tarrasch/zsh-colors
+zinve::fmt::fg() {
+    local ison=false
+    ! _zinve::fmt::use-colors || ison=true ;
+    local fg_color=$1 ; shift ;
+    [ $ison = false ] || printf %s "$fg[$fg_color]"
+
+    if [[ $# -lt 1 ]]; then
+        cat
+    else
+        print "$@"
+    fi
+    [ $ison = false ] || printf %s "$reset_color"
+
+}
+
+
+zinve::noop ${ZINVE__LOG_NAME:="zinve"}
+zinve::noop ${ZINVE__LOG_LVL_DEBUG:='DEBUG'}
+zinve::noop ${ZINVE__LOG_LVL_INFO:='INFO'}
+zinve::noop ${ZINVE__LOG_LVL_WARN:='WARN'}
+zinve::noop ${ZINVE__LOG_LVL_FATAL:='FATAL'}
+
+typeset -rgx _ZINVE__LOG_DEFAULT_LVL='INFO'
+
+zinve::noop ${ZINVE__CONFIG__LOG_LEVEL:="${_ZINVE__LOG_DEFAULT_LVL}"}
+
+typeset -Agx _ZINVE_LOG_LVL_TO_NUMS ;
+
+_ZINVE_LOG_LVL_TO_NUMS=(
+    FATAL 1000
+    WARN 2000
+    INFO 5000
+    DEBUG 10000
+)
+_zinve::log::log-with-level-unguarded() {
+    local lvl=$1 ; shift ;
+    local name="$ZINVE__LOG_NAME" ;
+    printf '[ %s ] %s  -  %s\n' "$name" "$lvl" "$*" >&2 ;
+}
+_zinve::log::err-invalid-level-common() {
+    _zinve::log::log-with-level-unguarded 'FATAL' "Invalid log level '$1'"
+    zinve::die-impl ;
+    return 1;
+}
+
+_zinve::log::err-invalid-level-arg() {
+    local lvl=$1 ; shift ;
+    local errmsg="Invalid log level '$lvl' for message '$*'"
+    _zinve::log::log-with-level-unguarded 'WARN' $errmsg
+    _zinve::log::err-invalid-level-common $lvl ;
+}
+
+_zinve::log::err-invalid-level-config() {
+    local param_lvl=$1 ; shift ;
+    local msg_lvl=$1 ; shift ;
+    local ngl='_zinve::log::log-with-level-unguarded'
+    typeset -a nglw=( $ngl 'WARN' )
+
+    ${nglw[@]} "Invalid logging configuration."
+    ${nglw[@]} "Key ZINVE__CONFIG__LOG_LEVEL has invalid level '$param_lvl'" ;
+    local lmsg="''" ;
+    if [[ $# -gt 0 ]]; then
+        lmsg="'$*'" ; shift $# ;
+    fi
+    ${nglw[@]} "I was trying to log the following with level $msg_lvl:"
+    echo $lmsg | sed -r 's/^/  | /g' >&2 ;
+    printf '\n' >&2 ;
+    _zinve::log::err-invalid-level-common $param_lvl ;
+}
+
+_zinve::log::log-with-level() {
+    local lvl=${1:u} ; shift ;
+    typeset -i lvl_score=0
+    local lvl_score_str="" ;
+    lvl_score_str=${_ZINVE_LOG_LVL_TO_NUMS[$lvl]:-""}
+    if [[ $lvl_score_str == "" ]]; then
+        _zinve::log::err-invalid-level-arg $lvl $@ ; return 1 ;
+    fi
+    lvl_score=$lvl_score_str
+    local lvl_param_str=${ZINVE__CONFIG__LOG_LEVEL:-""}
+    if [[ $lvl_param_str == "" ]]; then
+        lvl_param_str=${_ZINVE__LOG_DEFAULT_LVL} ;
+    fi
+    typeset -i lvl_param_no=0
+    local lvl_param_no_str=""
+    lvl_param_no_str=${_ZINVE_LOG_LVL_TO_NUMS[$lvl_param_str]:-""}
+    if [[ $lvl_param_no_str == "" ]]; then
+        local inval_p='_zinve::log::err-invalid-level-config'
+        $inval_p $lvl_param_str $lvl $@ ; return 1 ;
+    fi
+    lvl_param_no=$lvl_param_no_str
+    if [[ $lvl_score -le $lvl_param_no_str ]]; then
+        _zinve::log::log-with-level-unguarded $lvl $@
+    fi
+}
+
+zinve::log::info() {
+    _zinve::log::log-with-level ${ZINVE__LOG_LVL_INFO} $@
+}
+
+zinve::log::warn() {
+    _zinve::log::log-with-level ${ZINVE__LOG_LVL_WARN} $@
+}
+
+zinve::log::debug() {
+    _zinve::log::log-with-level ${ZINVE__LOG_LVL_DEBUG} $@
+}
+
+zinve::log::fatal() {
+    {
+        _zinve::log::log-with-level ${ZINVE__LOG_LVL_FATAL} $@ 2>&1 ;
+    } | zinve::fmt::fg red ;
+    zinve::die-impl ;
+}
+
+alias zinve::info='zinve::log::info'
+alias zinve::warn='zinve::log::warn'
+alias zinve::fatal='zinve::log::fatal'
+alias zinve::debug='zinve::log::fatal'
+
+
+
+
+
+zinve::nth() { cut -d ' ' -f $1 ; }
+zinve::digest::sha256() { sha256sum $1 | zinve::nth 1 ; }
+
+zinve::noop ${ZINVE__XXHASH_BASENAME:=xxhsum}
+zinve::digest::xxhash() { $ZINVE__XXHASH_BASENAME $1 | zinve::nth 1 ; }
+
+zinve::digest::have-xxhash() {
+    if ! whence -p $ZINVE__XXHASH_BASENAME &>/dev/null; then
+        return 1
+    fi
+}
+
+zinve::digest::choose-fn-and-suffix() {
+    local fname='zinve::digest'
+    local suffix='.asc'
+
+    if zinve::digest::have-xxhash ; then
+        fname+='::xxhash'
+        suffix=".xxhash${suffix}"
+    else
+        fname+='::sha256'
+        suffix=".sha256${suffix}"
+    fi
+    echo $fname $suffix ;
+
+}
+
+
+zinve::has-key() { [[ "${${(P)1}[$2]:-""}" != "" ]] || return 1 ; }
+zinve::isdef() { [[ ! -z ${${(P)1}+x} ]] || return 1 ; }
+zinve::has-any-key() {
+    local aname=$1 ; shift ;
+    local kname ;
+    for kname in $@; do
+        if zinve::has-key $aname $kname; then return ; fi
+    done
+    return 1
+}
+zinve::key-coalesce() {
+    local name=$1 ; shift ;
+    local keyk ;
+    zinve::isdef $name || return 1 ;
+    for keyk in $@; do
+        if zinve::has-key $name $keyk ; then
+            echo ${${(P)name}[$keyk]} ; return ;
+        fi
+    done
+    return 1 ;
+}
+
+
+
+if [[ -z ${ZINVE__PARAM__VENVS_BASEDIR+x} ]]; then
+     typeset -gx ZINVE__PARAM__VENVS_BASEDIR=""
+fi
+export ZINVE__PARAM__VENVS_BASEDIR
+
+if [[ -z ${ZINVE__PARAM__TARGET_PYTHON_BIN+x} ]]; then
+    typeset -gx ZINVE__PARAM__TARGET_PYTHON_BIN="python3"
+fi
+export ZINVE__PARAM__TARGET_PYTHON_BIN
+
+if [[ -z ${ZINVE__PARAM__TARGET_NAME+x} ]]; then
+    typeset -gx ZINVE__PARAM__TARGET_NAME="default"
+fi
+export ZINVE__PARAM__TARGET_NAME
+
+if [[ -z ${ZINVE__PARAM__TARGET_REQUIREMENTS_FILES+x} ]]; then
+    typeset -agx ZINVE__PARAM__TARGET_REQUIREMENTS_FILES=()
+fi
+
+typeset -gx  ZINVE__CONST__CACHE_DIR_BASENAME="cache"
+typeset -gx  ZINVE__CONST__DIGEST_DIR_BASENAME="digests"
+typeset -gx  ZINVE__CONST__CACHE_DIR_REL_VENV=$ZINVE__CONST__CACHE_DIR_BASENAME
+
+typeset -gx  ZINVE__CONST__DIGEST_DIR_REL_VENV=""
+ZINVE__CONST__DIGEST_DIR_REL_VENV=$ZINVE__CONST__CACHE_DIR_REL_VENV
+ZINVE__CONST__DIGEST_DIR_REL_VENV+="/$ZINVE__CONST__DIGEST_DIR_BASENAME"
+
+
+setopt errexit
+set -uo pipefail
+
+zinve::make-fs-cache-key() {
+    local bad_pat='[/.}{?\!]'
+    echo ${1//${~bad_pat}/_}
+}
+zinve::try-rmdir() {
+    if ! rmdir $1 &>/dev/null; then return 1; fi
+}
+
+_zinve::venv::find-py-bins() {
+    local dname=$1 ; shift ;
+    find $dname \( -type f -o -type l \) -a -name 'python*' -printf '%P\n' \
+        | sed -rn '/^python[0-9]/ p'
+}
+
+_zinve::version-str::has-minor() {
+    [[ ${1// /} =~ ^[0-9]+.[0-9]+ ]] || return 1
+}
+
+_zinve::venv::get-version-from-bin-dir() {
+    local curr="";
+    local bin_dir=$1 ;
+    [[ -d $bin_dir ]] || zinve::fatal "'$bin_dir' is not a directory" ;
+    local vstr=""
+    while read -r curr ; do
+        if _zinve::version-str::has-minor $curr ; then
+            vstr=$curr ; break ;
+        elif [[ $vstr == "" ]]; then
+            vstr=$curr ;
+        fi
+    done < <( _zinve::venv::find-py-bins $bin_d | sed -r 's/python//' )
+    if [[ $vstr == "" ]] ; then
+        zinve::warn "couldn't determine python version in ${bin_d}"
+        return 1 ;
+    fi
+    echo $vstr ;
+}
+
+_zinve::venv::find-wanted-python-version() {
+    local pybin=$1 ; shift ;
+    local pybase=${pybin:t}
+    local failmsg="$0 - don't know what to do with '$pybase' ('$pybin')"
+    if [[ $pybase != python* ]]; then
+        zinve::fatal $failmsg ; return 1 ;
+    fi
+    if [[ $pybase =~ ^python[0-9].* ]]; then
+        echo ${pybase##python} ; return ;
+    fi
+    if [[ $pybase != 'python' ]]; then
+        zinve::fatal $failmsg ; return 1 ;
+    fi
+    local bin_d=""
+    if [[ ${pybin} == '/'* ]]; then
+        bin_d=${pybin:h}
+    else
+        read -r bin_d < <( whence -p $pybase ) ;
+        bin_d=${bin_d:h}
+    fi
+    # since the user didn't specify a point version, we just match
+    # on major
+    _zinve::venv::get-version-from-bin-dir $bin_d \
+        | sed -r 's/\..*//'
+}
+
+_zinve::venv::exec-in-venv-unchecked() {
+    local venv_dir=$1 ; shift ;
+    PATH="${venv_dir}/bin:${PATH}" VIRTUAL_ENV="$venv_dir" exec $@
+}
+
+_zinve::venv::run-in-venv-unchecked() {
+    local venv_dir=$1 ; shift ;
+    PATH="${venv_dir}/bin:${PATH}" VIRTUAL_ENV="$venv_dir" $@
+}
+
+zinve::venv::ensure-by-path() {
+    typeset -a reqs=()
+    typeset -a adef=()
+    typeset -a force_list=()
+    typeset -a pybin_list=()
+    typeset -a dir_list=()
+    zparseopts -a adef r+:=reqs \
+            f=force_list -force=force_list \
+            p:=pybin_list -python:=pybin_list \
+            d:=dir_list -venv-dir:=dir_list
+
+    local venv_d=""
+    local kcfn='zinve::key-coalesce'
+    if [[ ${#dir_list} -ge 2 ]]; then
+        venv_d=${dir_list[2]}
+    else
+        zinve::fatal "Specify target directory with -d / --venv-dir." ;
+    fi
+    if [[ ${#pybin_list} -ge 2 ]]; then
+        pybin=${pybin_list[2]}
+    else
+        pybin='python'
+    fi
+    typeset -a bad_elems=( '-r' )
+    reqs=( ${reqs:|bad_elems} )
+
+    local is_force=false ;
+    if [[ ${#force_list} -gt 0 ]]; then
+        is_force=true ;
+    fi
+
+    local venv_z_state_d=$venv_d/.zinve
+    local upit=false
+    local bin_d=$venv_d/bin
+    local msg=""
+    if [[ -d $venv_d ]]; then
+        # if the venv dir exists, we want to make sure that:
+        #   - it's actually a virtualenv.
+        #   - its python version matches the one specified
+        #     by the -p / --python CLI flag.
+        #
+        # currently the first check is handled by looking for
+        # $venv_d/bin/python.
+        #
+        if [[ -d $bin_d ]] && [[ -e $bin_d/python ]] then
+            local wanted_v="" ;
+            read -r wanted_v < <( {
+                _zinve::venv::find-wanted-python-version $pybin
+            } )
+            local current_v=""
+            read -r current_v < <( {
+                _zinve::venv::get-version-from-bin-dir $bin_d
+            } )
+            local vmatch=true ;
+            if [[ $wanted_v == *'.'* ]]; then
+                if [[ $wanted_v != $current_v ]]; then
+                    vmatch=false ;
+                fi
+            else
+                if [[ $current_v != "$wanted_v"* ]]; then
+                    vmatch=false
+                fi
+            fi
+            if ( $vmatch ); then
+                true
+                # zinve::info "versions match : '$current_v' == '$wanted_v'"
+            else
+                msg="python version '$current_v' in '$venv_d' does not"
+                msg+=" match target version '$wanted_v'."
+                zinve::warn $msg ;
+                msg=""
+                if ( $is_force ); then
+                    msg="Because -f (force) is enabled, I'm killing $venv_d"
+                    msg+=" and rebuilding."
+                    zinve::warn $msg ;
+                    rm -rf $venv_d ;
+                    zinve::warn "( removed $venv_d )"
+                else
+                    msg="Aborting. If you want me to rebuild $venv_d with"
+                    msg+=" version '$wanted_v', pass the -f (force) flag."
+                    zinve::fatal "$msg" ; return 1 ;
+                fi
+            fi
+        else
+            # $venv_d/bin/python does not exist.
+            zinve::warn "'$venv_d' doesn't seem to be a valid virtualenv."
+            if zinve::try-rmdir $venv_d ; then
+                msg="Target '$venv_d' existed but wasn't a virtualenv."
+                msg+=" It was empty, so I removed it."
+                zinve::warn $msg ;
+            else
+                if ( $is_force ); then
+                    msg="Existing target '$venv_d' is invalid and -f (force)"
+                    msg+=" is enabled: removing '$venv_d' and rebuilding."
+                    zinve::warn $msg ;
+                    rm -rf $venv_d ;
+                else
+                    msg="Target dir '$venv_d' exists and is non-empty, but it"
+                    msg+=" doesn't look like a virtualenv dir."
+                    msg+=" If you want me to fix it, pass -f (force)."
+                    zinve::fatal $msg ; return 1 ;
+                fi
+            fi
+        fi
+    fi
+
+    if [[ ! -d $venv_d ]]; then
+        mkdir -p ${venv_d:h} ;
+        virtualenv -p ${pybin} $venv_d ;
+        _zinve::venv::run-in-venv-unchecked $venv_d \
+            ${venv_d}/bin/pip install --upgrade pip
+        upit=true
+    fi
+
+    local dig_d=$venv_z_state_d/digest
+    local dig_tmp_d=$venv_z_state_d/tmp/digest/
+    mkdir -p $dig_d $dig_tmp_d;
+    typeset -a needed_req_files=()
+    typeset -A output_digests; output_digests=() ;
+    local curr_reqf
+    local dig_fn dig_suffix
+    read -r dig_fn dig_suffix < <( zinve::digest::choose-fn-and-suffix )
+    for curr_reqf in ${reqs[@]}; do
+        curr_reqf=${curr_reqf:A}
+        local dig_key;
+        read -r dig_key < <( zinve::make-fs-cache-key $curr_reqf ) ;
+        local dig_f="${dig_d}/${dig_key}${dig_suffix}"
+        local curr_dig; read -r curr_dig < <( $dig_fn $curr_reqf )
+        curr_dig="${curr_dig// /}"
+        local prev_dig=""
+        if [[ -e $dig_f ]]; then
+            read -r prev_dig < $dig_f ;
+            prev_dig="${prev_dig// /}"
+        fi
+        if [[ $prev_dig == $curr_dig ]]; then
+            continue
+        fi
+        upit=true
+        output_digests+=( $dig_f $curr_dig )
+        needed_req_files+=( $curr_reqf )
+    done
+
+    # none of the requirements digests have changed.
+    if (! $upit); then return 0 ; fi
+
+    if [[ ${#needed_req_files} -gt 0 ]]; then
+        typeset -a pip_call=(
+            _zinve::venv::run-in-venv-unchecked $venv_d
+            "$venv_d/bin/pip" install
+        )
+        for curr_reqf in ${needed_req_files[@]}; do
+            pip_call+=( '-r' $curr_reqf )
+        done
+        if ! ${pip_call[@]}; then
+            zinve::fatal "call failed: '${pip_call[*]}'"
+            return 1 ;
+        fi
+    fi
+    for digf digv in ${(kv)output_digests}; do
+        local tempf="${dig_tmp_d}/${digf:t}.tmp~"
+        rm -f $tempf ; echo $digv > $tempf ;
+        mv -f $tempf $digf ;
+    done
+}
+
+_zinve::venv::run-or-exec-in-venv() {
+    local zinve_cmd_name=${1:u} ; shift ;
+    zinve::venv::ensure-by-path $@ || zinve::fatal "venv check failed" ;
+    typeset -a nothing=()
+    typeset -a dir_list=() ;
+    typeset -A optmap2 ; optmap2=() ;
+    zparseopts -D -E -a nothing d:=dir_list -venv-dir:=dir_list
+
+    local venv_d=""
+    [[ ${#dir_list} -ge 2 ]] || zinve::fatal "$0 unspecified venv dir" ;
+    venv_d=${dir_list[2]}
+
+    typeset -a cmd_parts=() ; local curr ;
+    while [[ $# -gt 0 ]]; do
+        curr=$1 ; shift ;
+        case $curr in
+            -- ) { cmd_parts+=( $@ ) ; shift $# ; break ; } ;;
+            *) { continue ; }
+        esac
+    done
+    local bin_d=$venv_d/bin
+    local default_bin="python"
+    [[ ! -e $bin_d/ipython ]] || default_bin=ipython ;
+
+    local bin_name=""
+    local bin_fpath=""
+    typeset -a bin_args=() ;
+    if [[ ${#cmd_parts} -lt 1 ]]; then
+        bin_name=$default_bin
+    else
+        bin_name=${cmd_parts[1]} ;
+        cmd_parts[1]=() ;
+    fi
+
+    if [[ $bin_name == '/'* ]]; then
+        bin_fpath=$bin_name ;
+    else
+        bin_fpath=${bin_d}/${bin_name}
+    fi
+    if [[ ! -e $bin_fpath ]]; then
+        zinve::fatal "Can't find '$bin_name'. Expected at path '$bin_fpath'" ;
+        return 1 ; # not reached
+    fi
+
+
+
+    local runner=""
+    case $zinve_cmd_name in
+        CMD_RUN) runner='_zinve::venv::run-in-venv-unchecked' ;;
+        CMD_EXEC) runner='_zinve::venv::exec-in-venv-unchecked' ;;
+        *) { zinve::fatal "$0 invalid command '$cmd_name'" ; } ;;
+    esac
+
+    typeset -a fin_call=(
+        $runner $venv_d $bin_fpath
+    )
+    [[ ${#cmd_parts} -lt 1 ]] || fin_call+=( ${cmd_parts[@]} ) ;
+
+    zinve::perfstamp "END"
+    ${fin_call[@]}
+}
+
+
+
+zinve::venv::run-in-venv() {
+    _zinve::venv::run-or-exec-in-venv 'CMD_EXEC' $@ ;
+}
+
+zinve::venv::exec-in-venv() {
+    _zinve::venv::run-or-exec-in-venv 'CMD_RUN' $@ ;
+}
+
+zinve::venv::debug() {
+    echo "VARS: " ;
+    printf -- '%*s\n\n' 32 "" ;
+
+    typeset -p | sort | ansifilter | sed -r 's/^/      | /' ;
+    printf '\n' ;
+    printf -- '%*s\n' 32 "" ;
+}
+
+
+
+
+zinve-main-helper::version-info() {
+    printf 'version=%s\n' "$ZINVE__CONST__VERSION_STR"
+    printf 'revision=%s\n' "$ZINVE__CONST__GIT_REVISION"
+}
+_zinve-main-helper::list-commands() {
+    local pfx='^zinve-main-cmd::'
+    functions + \
+        | sed -rn '/'$pfx'/ p' \
+        | sed -r 's/'$pfx'//' \
+        | grep -Ev '^debug'
+}
+
+zinve-main-helper::show-usage() {
+    echo "Usage: zinve \$COMMAND \$COMMAND_ARG1 ... \$COMMAND_ARGN" ;
+    printf '\n' ;
+    echo "Commands: " ;
+    _zinve-main-helper::list-commands | sed -r 's/^/        /' ;
+    printf '\n\n' ;
+}
+
+
+zinve-error::unknown-command() {
+    zinve-main-helper::show-usage >&2 ;
+    [[ $# -gt 0 ]] || zinve-error::no-command ;
+    local cmd=$1 ; shift ;
+    local arg_str="''" ;
+    [[ $# -lt 1 ]] || { arg_str="'$*'" ; shift $# ; }
+    zinve::fatal  "Unknown command '$cmd'.  Input args were: $arg_str"
+}
+
+zinve-error::no-command() {
+    zinve-main-helper::show-usage >&2 ;
+    zinve::fatal "Expected a command"
+}
+
+
+
+
+zinve-main-cmd::exec() {
+    zinve::venv::exec-in-venv $@ ;
+}
+zinve-main-cmd::run() {
+    zinve::venv::run-in-venv $@ ;
+}
+
+zinve-main-cmd::debug2() {
+    zinve::venv::debug $@ ;
+}
+
+zinve-main-cmd::debug() {
+    echo "VARS: " ;
+    printf -- '%*s\n\n' 32 "" ;
+
+    typeset -p | sort | ansifilter | sed -r 's/^/      | /' ;
+    printf '\n' ;
+    printf -- '%*s\n' 32 "" ;
+}
+
+zinve-main-cmd::help() {
+    local vstr="$ZINVE__CONST__VERSION_STR"
+    printf 'zinve-%s\n\n' $vstr ;
+    zinve-main-helper::show-usage ;
+}
+
+zinve-main-cmd::version() {
+    zinve-main-helper::version-info
+}
+
+zinve-main-dispatch() {
+    local cmdname=""
+    typeset -a orig_args=()
+    [[ $# -lt 1 ]] || orig_args+=( $@ ) ;
+    if [[ $# -eq 1 ]] && [[ $1 == '-'* ]]; then
+        case $1 in
+            -h | --help ) { cmdname='help' ; shift ; } ;;
+            -v | --version) { cmdname='version' ; shift ; } ;;
+        esac
+    fi
+    if [[ $cmdname == "" ]] && [[ $# -gt 0 ]] && [[ $1 != '-'* ]]; then
+        cmdname=$1 ; shift ;
+    fi
+    [[ $cmdname != "" ]] || zinve-error::no-command ;
+    local cmd_func="zinve-main-cmd::${cmdname}"
+    if ! type $cmd_func &>/dev/null; then
+        zinve-error::unknown-command $cmdname ${orig_args[@]} ;
+    fi
+    ${cmd_func} $@ ;
+}
+
+
+zinve-main-dispatch $@
+
