@@ -14,6 +14,15 @@ setopt err_return
     local reqs=${bmdown_d}/requirements.txt
     local zinv_b=${LVS_THWW__SCRIPTS_D}/zinve
 
+    lvthw::info "interpreter: $py_bin"
+    lvthw::info "virtualenv_dir: $venv_d"
+
+    local zinve_vers ;
+    read -r zinve_vers < <(
+        ${zinv_b} version | grep -E '^version=' | cut -d '=' -f 2
+    )
+    lvthw::info "zinve_v: $zinve_vers"
+
     typeset -a zinve_call=(
         ${zinv_b} 'exec'
         -d ${venv_d}
@@ -41,7 +50,7 @@ setopt err_return
 
     rm -rf ${dest_d} ;
     cp -r ${lvthw_d}/build/html ${dest_d}
-    lvthw::ok "Success. Built HTML is at:"
+    lvthw::ok "Built HTML is at:"
     echo ${dest_d}
 } $@ ;
 

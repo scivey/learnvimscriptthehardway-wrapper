@@ -26,7 +26,7 @@ _say() {
 lvthw::info() { _say 'INFO' white $@ ; }
 lvthw::warn() { _say 'WARN' yellow $@ ; }
 lvthw::fatal() { _say 'FATAL' red $@ ; return 1 ; }
-lvthw::ok() { _say 'SUCCESS' green @$ ; }
+lvthw::ok() { _say 'SUCCESS' green $@ ; }
 
 die() {
     lvthw::fatal $@ ;
