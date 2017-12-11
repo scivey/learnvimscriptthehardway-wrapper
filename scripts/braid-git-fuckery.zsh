@@ -37,7 +37,7 @@ UPSTREAM_BRANCH='master'
         # mkdir -p ${ours:A:h} ;
         lvthw::info "braid call is: " ;
         ds-argshow-bin ${braid_call[@]} ;
-        # braid add "$upstream" "$ours" --branch=$UPSTREAM_BRANCH
+        ${braid_call[@]} ;
     done
 } $@ ;
 
