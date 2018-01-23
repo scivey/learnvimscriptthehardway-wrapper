@@ -1,7 +1,6 @@
 #!/usr/bin/env zsh
 
 set -uo pipefail
-setopt err_return
 
 . ${0:A:h}/_common.zsh
 
@@ -50,8 +49,7 @@ setopt err_return
 
     rm -rf ${dest_d} ;
     cp -r ${lvthw_d}/build/html ${dest_d}
-    lvthw::ok "Built HTML is at:"
-    echo ${dest_d}
+    lvthw::ok "Built HTML is at ${dest_d}"
 } $@ ;
 
 
