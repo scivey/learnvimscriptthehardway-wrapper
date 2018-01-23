@@ -9,6 +9,13 @@ make
 ````
 Rendered pages go to `build/learnvimscriptthehardway/`.
 
+## serving
+To build and serve on `127.0.0.1:8000`:
+```shell
+make serve
+```
+To use a different interface/port see [./scripts/serve.zsh](./scripts/serve.zsh).
+
 ## syncing with upstream
 Subtrees are managed with [braid](https://github.com/cristibalan/braid).
 
